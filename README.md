@@ -11,6 +11,9 @@
 | Windows | `EBookCloud-*-windows-x64-setup.exe` | 64 位安装包 |
 | macOS (Apple Silicon) | `EBookCloud-*-macos-arm64.dmg` | M 系列芯片 |
 | macOS (Intel) | `EBookCloud-*-macos-x64.dmg` | Intel 芯片 |
+| Tampermonkey | `ebook-cloud-tools.user.js` | 书库查重 / 账户导入油猴脚本 |
+
+油猴安装（需已装 Tampermonkey）：打开 [ebook-cloud-tools.user.js](https://github.com/Jireh012/EBookCloud-Release/raw/main/ebook-cloud-tools.user.js)。
 
 ## macOS：提示「已损坏，无法打开」？
 
