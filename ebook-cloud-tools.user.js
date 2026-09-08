@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EBookCloudTools
 // @namespace    https://github.com/Jireh012/EBookCloud
-// @version      1.0.62
+// @version      1.0.63
 // @description  EBookCloud 平台工具：书库查重、账户导入、Cookie 更新
 // @homepageURL  https://github.com/Jireh012/EBookCloud
 // @supportURL   https://github.com/Jireh012/EBookCloud/issues
@@ -25,6 +25,12 @@
 // @match        *://*.books.com.tw/*
 // @match        *://kingstone.com.tw/*
 // @match        *://*.kingstone.com.tw/*
+// @match        *://play.google.com/books*
+// @match        *://play.google.com/store/books*
+// @match        *://*.play.google.com/books*
+// @match        *://*.play.google.com/store/books*
+// @match        *://books.google.com/*
+// @match        *://*.books.google.com/*
 // @match        *://amazon.com/*
 // @match        *://*.amazon.com/*
 // @match        *://amazon.cn/*
@@ -61,7 +67,7 @@
 // @match        *://*.amazon.com.mx/*
 // @match        *://amazon.com.be/*
 // @match        *://*.amazon.com.be/*
-// @match        *://*/*
+// @include      /^https?:\/\/([^/?#]*\.)*(endao[a-z0-9-]*|edread)(\.[a-z0-9.-]+)+(:\d+)?([/?#]|$)/i
 // @exclude      *://read.amazon.com/*
 // @exclude      *://read.amazon.cn/*
 // @exclude      *://read.amazon.co.jp/*
@@ -5203,8 +5209,9 @@ ${PANEL_CHROME_CSS}`;
     installLocalClient((message) => session.dispatch(message));
   }
   function main() {
-    installRuntime();
     const url = currentUrl2();
+    if (!shouldBootLookup(url)) return;
+    installRuntime();
     if (detectPlatform(url) === "WDBOOK") injectPageBridge();
     let panel = null;
     const ensurePanel = () => {
@@ -5213,11 +5220,9 @@ ${PANEL_CHROME_CSS}`;
       }
       return panel;
     };
-    if (shouldBootLookup(url)) {
-      injectStyle(content_default, "data-ebook-cloud-content-css");
-      ensurePanel();
-      bootContentLookup();
-    }
+    injectStyle(content_default, "data-ebook-cloud-content-css");
+    ensurePanel();
+    bootContentLookup();
     if (typeof GM_registerMenuCommand === "function") {
       GM_registerMenuCommand("\u6253\u5F00 / \u5173\u95ED EBookCloudTools", () => {
         ensurePanel().toggle();
