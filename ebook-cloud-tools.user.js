@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EBookCloudTools
 // @namespace    https://github.com/Jireh012/EBookCloud
-// @version      1.0.64
+// @version      1.0.65
 // @description  EBookCloud 平台工具：书库查重、账户导入、Cookie 更新
 // @homepageURL  https://github.com/Jireh012/EBookCloud
 // @supportURL   https://github.com/Jireh012/EBookCloud/issues
@@ -340,6 +340,36 @@
   var LOOKUP_PERMISSION_CACHE_MS = 5 * 60 * 1e3;
   var LOOKUP_UNAUTH_EXTENSION = "\u8BF7\u5148\u5728\u63D2\u4EF6\u4E2D\u767B\u5F55 EBookCloud";
   var LOOKUP_UNAUTH_USERSCRIPT = "\u8BF7\u5148\u5728 EBookCloudTools \u9762\u677F\u767B\u5F55";
+  var BOOKSTW_COOKIE_ORIGINS = ["https://viewer-ebook.books.com.tw/", "https://www.books.com.tw/"];
+  function isBookstwHostUrl(url) {
+    try {
+      return /(^|\.)books\.com\.tw$/i.test(new URL(url).hostname);
+    } catch {
+      return false;
+    }
+  }
+  function dedupeCookiesByName(cookies) {
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const cookie of cookies) {
+      const key = cookie.name.toLowerCase();
+      if (!cookie.name || seen.has(key)) continue;
+      seen.add(key);
+      out.push(cookie);
+    }
+    return out;
+  }
+  function mergeCookiePairs(primary, extra) {
+    const seen = new Set(primary.map((cookie) => cookie.name.toLowerCase()));
+    const merged = [...primary];
+    for (const cookie of extra) {
+      const key = cookie.name.toLowerCase();
+      if (!cookie.name || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(cookie);
+    }
+    return merged;
+  }
   function activeTabFromUrl(href, doc) {
     try {
       const url = new URL(href);
@@ -584,7 +614,17 @@
         return { ok: false, error: "\u5F53\u524D\u6807\u7B7E\u9875\u5730\u5740\u65E0\u6548\uFF0C\u65E0\u6CD5\u8BFB\u53D6 Cookie" };
       }
       try {
-        const cookies = await io.readCookies(url);
+        let cookies = await io.readCookies(url);
+        if (isBookstwHostUrl(url)) {
+          for (const origin of BOOKSTW_COOKIE_ORIGINS) {
+            if (url.startsWith(origin)) continue;
+            try {
+              cookies = mergeCookiePairs(cookies, await io.readCookies(origin));
+            } catch {
+            }
+          }
+        }
+        cookies = dedupeCookiesByName(cookies);
         if (!cookies.length) {
           return { ok: false, error: "\u672A\u80FD\u8BFB\u53D6\u5230\u8BE5\u7F51\u7AD9\u7684 Cookie\uFF0C\u8BF7\u786E\u8BA4\u5DF2\u767B\u5F55\u8BE5\u5E73\u53F0" };
         }
@@ -3791,7 +3831,7 @@ ${ids}`;
   }
 
   // src/content/index.ts
-  var EXT_VERSION = "1.0.64";
+  var EXT_VERSION = "1.0.65";
   var EXT_ATTR = "data-ebook-cloud-ext";
   var WDBOOK_CART_EVENT = "ebook-cloud-wdbook-cart";
   var SCAN_DEBOUNCE_MS = 750;
