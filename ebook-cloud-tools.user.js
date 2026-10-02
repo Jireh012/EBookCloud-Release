@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EBookCloudTools
 // @namespace    https://github.com/Jireh012/EBookCloud
-// @version      1.0.65
+// @version      1.0.66
 // @description  EBookCloud 平台工具：书库查重、账户导入、Cookie 更新
 // @homepageURL  https://github.com/Jireh012/EBookCloud
 // @supportURL   https://github.com/Jireh012/EBookCloud/issues
@@ -3831,7 +3831,7 @@ ${ids}`;
   }
 
   // src/content/index.ts
-  var EXT_VERSION = "1.0.65";
+  var EXT_VERSION = "1.0.66";
   var EXT_ATTR = "data-ebook-cloud-ext";
   var WDBOOK_CART_EVENT = "ebook-cloud-wdbook-cart";
   var SCAN_DEBOUNCE_MS = 750;
