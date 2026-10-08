@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EBookCloudTools
 // @namespace    https://github.com/Jireh012/EBookCloud
-// @version      1.0.66
+// @version      1.0.67
 // @description  EBookCloud 平台工具：书库查重、账户导入、Cookie 更新
 // @homepageURL  https://github.com/Jireh012/EBookCloud
 // @supportURL   https://github.com/Jireh012/EBookCloud/issues
@@ -340,7 +340,12 @@
   var LOOKUP_PERMISSION_CACHE_MS = 5 * 60 * 1e3;
   var LOOKUP_UNAUTH_EXTENSION = "\u8BF7\u5148\u5728\u63D2\u4EF6\u4E2D\u767B\u5F55 EBookCloud";
   var LOOKUP_UNAUTH_USERSCRIPT = "\u8BF7\u5148\u5728 EBookCloudTools \u9762\u677F\u767B\u5F55";
-  var BOOKSTW_COOKIE_ORIGINS = ["https://viewer-ebook.books.com.tw/", "https://www.books.com.tw/"];
+  var BOOKSTW_COOKIE_ORIGINS = [
+    "https://appapi-ebook.books.com.tw/",
+    "https://viewer-ebook.books.com.tw/",
+    "https://www.books.com.tw/",
+    "https://cart.books.com.tw/"
+  ];
   function isBookstwHostUrl(url) {
     try {
       return /(^|\.)books\.com\.tw$/i.test(new URL(url).hostname);
@@ -348,25 +353,47 @@
       return false;
     }
   }
+  function isGuestCmsValue(value) {
+    let decoded = value.trim();
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+    }
+    return /guest|anonymous|訪客|游客/i.test(decoded);
+  }
+  function cmsTokenRank(cookie) {
+    if (cookie.name.toLowerCase() !== "cmstoken") return 0;
+    return isGuestCmsValue(cookie.value) ? 0 : 1;
+  }
   function dedupeCookiesByName(cookies) {
-    const seen = /* @__PURE__ */ new Set();
-    const out = [];
+    const best = /* @__PURE__ */ new Map();
+    const order = [];
     for (const cookie of cookies) {
       const key = cookie.name.toLowerCase();
-      if (!cookie.name || seen.has(key)) continue;
-      seen.add(key);
-      out.push(cookie);
+      if (!cookie.name) continue;
+      const prev = best.get(key);
+      if (!prev) {
+        best.set(key, cookie);
+        order.push(key);
+        continue;
+      }
+      if (cmsTokenRank(cookie) > cmsTokenRank(prev)) best.set(key, cookie);
     }
-    return out;
+    return order.map((key) => best.get(key));
   }
   function mergeCookiePairs(primary, extra) {
-    const seen = new Set(primary.map((cookie) => cookie.name.toLowerCase()));
     const merged = [...primary];
+    const index = new Map(merged.map((cookie, i) => [cookie.name.toLowerCase(), i]));
     for (const cookie of extra) {
       const key = cookie.name.toLowerCase();
-      if (!cookie.name || seen.has(key)) continue;
-      seen.add(key);
-      merged.push(cookie);
+      if (!cookie.name) continue;
+      const at = index.get(key);
+      if (at === void 0) {
+        index.set(key, merged.length);
+        merged.push(cookie);
+        continue;
+      }
+      if (cmsTokenRank(cookie) > cmsTokenRank(merged[at])) merged[at] = cookie;
     }
     return merged;
   }
@@ -620,6 +647,12 @@
             if (url.startsWith(origin)) continue;
             try {
               cookies = mergeCookiePairs(cookies, await io.readCookies(origin));
+            } catch {
+            }
+          }
+          if (io.readPageSession) {
+            try {
+              cookies = mergeCookiePairs(cookies, await io.readPageSession(url));
             } catch {
             }
           }
@@ -3831,7 +3864,7 @@ ${ids}`;
   }
 
   // src/content/index.ts
-  var EXT_VERSION = "1.0.66";
+  var EXT_VERSION = "1.0.67";
   var EXT_ATTR = "data-ebook-cloud-ext";
   var WDBOOK_CART_EVENT = "ebook-cloud-wdbook-cart";
   var SCAN_DEBOUNCE_MS = 750;
@@ -4184,6 +4217,49 @@ ${booksFingerprint(books)}`;
     navTimer = window.setInterval(watchNavigation, 800);
   }
 
+  // src/shared/bookstwPageSession.ts
+  var DEVICE_REG_FALLBACK = "https://appapi-ebook.books.com.tw/V1.7/CMSAPIApp/";
+  function isGuestProfile(token, profileName) {
+    if (/^guest_/i.test(profileName.trim())) return true;
+    let decoded = token.trim();
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+    }
+    return /guest|anonymous|訪客|游客/i.test(decoded);
+  }
+  function deviceRegUrl(page, deviceId) {
+    const raw = (page.apiPath || DEVICE_REG_FALLBACK).trim();
+    const absolute = raw.startsWith("//") ? `https:${raw}` : raw;
+    const root = absolute.replace(/\/+$/, "");
+    const params = new URLSearchParams({
+      device_id: deviceId,
+      language: page.userLanguage?.() || "zh-TW",
+      os_type: "WEB",
+      os_version: page.appVersion || "WEB",
+      screen_resolution: `${page.screenWidth || 0}X${page.screenHeight || 0}`,
+      screen_dpi: String(page.screenDpi ?? "96"),
+      device_vendor: page.vendor || "web",
+      device_model: page.vendorSub || "web"
+    });
+    return `${root}/DeviceReg?${params.toString()}`;
+  }
+  async function readBookstwMemberTokenFromPage(page) {
+    if (!/(^|\.)books\.com\.tw$/i.test(page.hostname)) return [];
+    const deviceId = page.deviceId?.trim() || "";
+    if (!deviceId || typeof page.askCms !== "function") return [];
+    let data;
+    try {
+      data = await page.askCms({ url: deviceRegUrl(page, deviceId), type: "GET" });
+    } catch {
+      return [];
+    }
+    const token = String(data?.CmsToken || data?.cmsToken || "").trim();
+    const profileName = String(data?.name || "");
+    if (!token || isGuestProfile(token, profileName)) return [];
+    return [{ name: "CmsToken", value: token }];
+  }
+
   // src/userscript/gm-io.ts
   function gmFetchJson(url, init = {}) {
     return new Promise((resolve, reject) => {
@@ -4247,6 +4323,58 @@ ${booksFingerprint(books)}`;
       }
     });
   }
+  function pageWindow() {
+    const candidate = globalThis.unsafeWindow;
+    return candidate || globalThis;
+  }
+  function withTimeout(promise, ms, fallback) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(fallback), ms);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve(fallback);
+        }
+      );
+    });
+  }
+  function readBookstwPageSession() {
+    let hostname = "";
+    try {
+      hostname = location.hostname;
+    } catch {
+      return Promise.resolve([]);
+    }
+    const page = pageWindow();
+    const screen = page.screen;
+    let screenDpi;
+    try {
+      screenDpi = page.$?.getDPI?.();
+    } catch {
+      screenDpi = void 0;
+    }
+    return withTimeout(
+      readBookstwMemberTokenFromPage({
+        hostname,
+        deviceId: page.localStorage?.getItem("device_id"),
+        apiPath: page.api_path,
+        askCms: page.$?.askCms?.bind(page.$),
+        userLanguage: page.$?.userLanguage?.bind(page.$),
+        screenDpi,
+        appVersion: page.navigator?.appVersion,
+        vendor: page.navigator?.vendor,
+        vendorSub: page.navigator?.vendorSub || page.user_device,
+        screenWidth: screen?.width,
+        screenHeight: screen?.height
+      }),
+      8e3,
+      []
+    );
+  }
   function createGmIo() {
     return {
       async get(keys) {
@@ -4269,6 +4397,14 @@ ${booksFingerprint(books)}`;
       },
       readCookies(url) {
         return gmListCookies(url);
+      },
+      readPageSession(url) {
+        try {
+          if (!/(^|\.)books\.com\.tw$/i.test(new URL(url).hostname)) return Promise.resolve([]);
+        } catch {
+          return Promise.resolve([]);
+        }
+        return readBookstwPageSession();
       }
     };
   }
