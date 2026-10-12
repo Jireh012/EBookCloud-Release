@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EBookCloudTools
 // @namespace    https://github.com/Jireh012/EBookCloud
-// @version      1.0.67
+// @version      1.0.68
 // @description  EBookCloud 平台工具：书库查重、账户导入、Cookie 更新
 // @homepageURL  https://github.com/Jireh012/EBookCloud
 // @supportURL   https://github.com/Jireh012/EBookCloud/issues
@@ -346,12 +346,30 @@
     "https://www.books.com.tw/",
     "https://cart.books.com.tw/"
   ];
+  var READMOO_COOKIE_ORIGINS = [
+    "https://readmoo.com/",
+    "https://member.readmoo.com/",
+    "https://new-read.readmoo.com/",
+    "https://read.readmoo.com/",
+    "https://api.readmoo.com/",
+    "https://reader.readmoo.com/"
+  ];
   function isBookstwHostUrl(url) {
     try {
       return /(^|\.)books\.com\.tw$/i.test(new URL(url).hostname);
     } catch {
       return false;
     }
+  }
+  function isReadmooHostUrl(url) {
+    try {
+      return /(^|\.)readmoo\.com$/i.test(new URL(url).hostname);
+    } catch {
+      return false;
+    }
+  }
+  function hasReadmooSessionCookie(cookies) {
+    return cookies.some((cookie) => cookie.name.toLowerCase() === "readmoo" && cookie.value.trim().length > 0);
   }
   function isGuestCmsValue(value) {
     let decoded = value.trim();
@@ -361,9 +379,11 @@
     }
     return /guest|anonymous|訪客|游客/i.test(decoded);
   }
-  function cmsTokenRank(cookie) {
-    if (cookie.name.toLowerCase() !== "cmstoken") return 0;
-    return isGuestCmsValue(cookie.value) ? 0 : 1;
+  function cookieRank(cookie) {
+    const value = cookie.value.trim();
+    if (!value) return 0;
+    if (cookie.name.toLowerCase() !== "cmstoken") return 1;
+    return isGuestCmsValue(value) ? 1 : 2;
   }
   function dedupeCookiesByName(cookies) {
     const best = /* @__PURE__ */ new Map();
@@ -377,7 +397,7 @@
         order.push(key);
         continue;
       }
-      if (cmsTokenRank(cookie) > cmsTokenRank(prev)) best.set(key, cookie);
+      if (cookieRank(cookie) > cookieRank(prev)) best.set(key, cookie);
     }
     return order.map((key) => best.get(key));
   }
@@ -393,7 +413,7 @@
         merged.push(cookie);
         continue;
       }
-      if (cmsTokenRank(cookie) > cmsTokenRank(merged[at])) merged[at] = cookie;
+      if (cookieRank(cookie) > cookieRank(merged[at])) merged[at] = cookie;
     }
     return merged;
   }
@@ -642,22 +662,27 @@
       }
       try {
         let cookies = await io.readCookies(url);
-        if (isBookstwHostUrl(url)) {
-          for (const origin of BOOKSTW_COOKIE_ORIGINS) {
-            if (url.startsWith(origin)) continue;
-            try {
-              cookies = mergeCookiePairs(cookies, await io.readCookies(origin));
-            } catch {
-            }
+        const extraOrigins = isBookstwHostUrl(url) ? BOOKSTW_COOKIE_ORIGINS : isReadmooHostUrl(url) ? READMOO_COOKIE_ORIGINS : [];
+        for (const origin of extraOrigins) {
+          if (url.startsWith(origin)) continue;
+          try {
+            cookies = mergeCookiePairs(cookies, await io.readCookies(origin));
+          } catch {
           }
-          if (io.readPageSession) {
-            try {
-              cookies = mergeCookiePairs(cookies, await io.readPageSession(url));
-            } catch {
-            }
+        }
+        if (extraOrigins.length && io.readPageSession) {
+          try {
+            cookies = mergeCookiePairs(cookies, await io.readPageSession(url));
+          } catch {
           }
         }
         cookies = dedupeCookiesByName(cookies);
+        if (isReadmooHostUrl(url) && cookies.length && !hasReadmooSessionCookie(cookies)) {
+          return {
+            ok: false,
+            error: "\u672A\u80FD\u8BFB\u53D6\u8BFB\u58A8\u4F1A\u8BDD Cookie\uFF08readmoo\uFF09\u3002\u8BF7\u786E\u8BA4\u5DF2\u767B\u5F55\u8BFB\u58A8\uFF1B\u82E5\u4F7F\u7528\u6CB9\u7334\uFF0C\u8BF7\u628A Tampermonkey\u300C\u5141\u8BB8\u811A\u672C\u8BBF\u95EE Cookie\u300D\u8BBE\u4E3A\u300C\u5168\u90E8\u300D\u540E\u91CD\u8BD5\u3002"
+          };
+        }
         if (!cookies.length) {
           return { ok: false, error: "\u672A\u80FD\u8BFB\u53D6\u5230\u8BE5\u7F51\u7AD9\u7684 Cookie\uFF0C\u8BF7\u786E\u8BA4\u5DF2\u767B\u5F55\u8BE5\u5E73\u53F0" };
         }
@@ -3864,7 +3889,7 @@ ${ids}`;
   }
 
   // src/content/index.ts
-  var EXT_VERSION = "1.0.67";
+  var EXT_VERSION = "1.0.68";
   var EXT_ATTR = "data-ebook-cloud-ext";
   var WDBOOK_CART_EVENT = "ebook-cloud-wdbook-cart";
   var SCAN_DEBOUNCE_MS = 750;
@@ -4260,6 +4285,18 @@ ${booksFingerprint(books)}`;
     return [{ name: "CmsToken", value: token }];
   }
 
+  // src/shared/readmooPageSession.ts
+  function readmooCookieFromSetCookieHeader(raw) {
+    const value = setCookieValue(raw, "readmoo");
+    return value ? [{ name: "readmoo", value }] : [];
+  }
+  function setCookieValue(raw, name) {
+    const pattern = new RegExp(`(?:^|\\n)\\s*set-cookie:\\s*${name}=([^;\\r\\n]*)`, "i");
+    const match = raw.match(pattern);
+    const value = match?.[1]?.trim() ?? "";
+    return value;
+  }
+
   // src/userscript/gm-io.ts
   function gmFetchJson(url, init = {}) {
     return new Promise((resolve, reject) => {
@@ -4290,7 +4327,7 @@ ${booksFingerprint(books)}`;
       });
     });
   }
-  function gmListCookies(url) {
+  function gmListCookies(details) {
     return new Promise((resolve, reject) => {
       if (typeof GM_cookie?.list !== "function") {
         reject(new Error("\u65E0\u6CD5\u8BFB\u53D6 Cookie\uFF0C\u8BF7\u4F7F\u7528 Tampermonkey \u5E76\u6388\u6743 Cookie \u6743\u9650"));
@@ -4303,7 +4340,7 @@ ${booksFingerprint(books)}`;
         fn();
       };
       try {
-        const maybe = GM_cookie.list({ url }, (cookies, error) => {
+        const maybe = GM_cookie.list(details, (cookies, error) => {
           finish(() => {
             if (error) {
               reject(new Error(typeof error === "string" ? error : "\u8BFB\u53D6 Cookie \u5931\u8D25"));
@@ -4322,6 +4359,53 @@ ${booksFingerprint(books)}`;
         finish(() => reject(error instanceof Error ? error : new Error("\u8BFB\u53D6 Cookie \u5931\u8D25")));
       }
     });
+  }
+  function isReadmooUrl(url) {
+    try {
+      return /(^|\.)readmoo\.com$/i.test(new URL(url).hostname);
+    } catch {
+      return false;
+    }
+  }
+  function readReadmooPageSession(pageUrl) {
+    return new Promise((resolve) => {
+      let target = "https://readmoo.com/";
+      try {
+        const url = new URL(pageUrl);
+        url.hash = "";
+        target = url.toString();
+      } catch {
+        target = "https://readmoo.com/";
+      }
+      try {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: target,
+          timeout: 8e3,
+          anonymous: false,
+          onload(res) {
+            resolve(readmooCookieFromSetCookieHeader(res.responseHeaders || ""));
+          },
+          onerror() {
+            resolve([]);
+          },
+          ontimeout() {
+            resolve([]);
+          }
+        });
+      } catch {
+        resolve([]);
+      }
+    });
+  }
+  async function readReadmooCookies(url) {
+    const batches = await Promise.all([
+      gmListCookies({ url }).catch(() => []),
+      gmListCookies({ name: "readmoo" }).catch(() => []),
+      gmListCookies({ domain: ".readmoo.com" }).catch(() => []),
+      gmListCookies({ url, partitionKey: {} }).catch(() => [])
+    ]);
+    return batches.flat();
   }
   function pageWindow() {
     const candidate = globalThis.unsafeWindow;
@@ -4396,15 +4480,19 @@ ${booksFingerprint(books)}`;
         return gmFetchJson(url, init);
       },
       readCookies(url) {
-        return gmListCookies(url);
+        if (isReadmooUrl(url)) return readReadmooCookies(url);
+        return gmListCookies({ url });
       },
       readPageSession(url) {
+        let hostname = "";
         try {
-          if (!/(^|\.)books\.com\.tw$/i.test(new URL(url).hostname)) return Promise.resolve([]);
+          hostname = new URL(url).hostname;
         } catch {
           return Promise.resolve([]);
         }
-        return readBookstwPageSession();
+        if (/(^|\.)books\.com\.tw$/i.test(hostname)) return readBookstwPageSession();
+        if (/(^|\.)readmoo\.com$/i.test(hostname)) return readReadmooPageSession(url);
+        return Promise.resolve([]);
       }
     };
   }
